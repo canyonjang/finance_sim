@@ -19,10 +19,7 @@ if 'checked_scenarios' not in st.session_state:
 if 'results_log' not in st.session_state:
     st.session_state.results_log = {}
 
-# 4. 입력 잠금 로직 개선
-is_finished = len(st.session_state.checked_scenarios) >= 4
-
-# 5. 학생 정보 입력 (메인 화면 상단)
+# 4. 앱 타이틀 및 학생 정보
 st.title("🎯 목표 기반 저축 및 투자 시뮬레이션")
 st.markdown("---")
 
@@ -32,22 +29,18 @@ with col_info1:
 with col_info2:
     user_id = st.text_input("🆔 학번", placeholder="학번을 입력하세요")
 
-# 6. 사이드바 설정
+# 5. 사이드바 설정 (시나리오 선택을 맨 아래로 이동)
 st.sidebar.header("📋 1. 재무 목표 및 조건 설정")
 
-# 시나리오가 선택되었는지 여부를 먼저 판단 (잠금용)
-# 사이드바에서 시나리오 선택 상자를 미리 정의하지 않고 상태만 체크
-temp_scenario = st.sidebar.selectbox(
-    "🚨 3. 시나리오 선택",
-    ["시나리오를 선택하세요", "1. 정상 시장", "2. 위기(인플레)", "3. 위기(폭락)", "4. 복합 위기"],
-    key="scenario_select"
-)
+# 잠금 로직: 시나리오가 '선택하세요'가 아니면 즉시 잠금
+# selectbox의 위치는 아래에 있지만, 변수를 미리 선언하기 위해 placeholder 개념 활용
+if "current_scenario" not in st.session_state:
+    st.session_state.current_scenario = "시나리오를 선택하세요"
 
-# 잠금 조건: '선택하세요'가 아니고, 아직 4개를 다 확인하지 않았을 때 잠금
-# 혹은 4개를 다 확인한 후에도 '다시 입력'을 누르기 전까지 잠금
-disable_input = (temp_scenario != "시나리오를 선택하세요") or is_finished
+is_finished = len(st.session_state.checked_scenarios) >= 4
+disable_input = (st.session_state.current_scenario != "시나리오를 선택하세요") or is_finished
 
-st.sidebar.markdown("---")
+# --- 사이드바 입력창 영역 ---
 st.sidebar.subheader("💰 조건 입력")
 goal_text = st.sidebar.text_input(
     "목적", 
@@ -64,26 +57,35 @@ stock_ratio = st.sidebar.slider("주식 비중 (%)", 0, 100, 60, disabled=disabl
 bond_ratio = 100 - stock_ratio
 st.sidebar.info(f"채권 비중: {bond_ratio}%")
 
-# 7. 시뮬레이션 실행 조건 분기
-if temp_scenario != "시나리오를 선택하세요":
-    # 시나리오별 로직 적용
+st.sidebar.markdown("---")
+# --- 시나리오 선택창을 맨 아래로 배치 ---
+st.session_state.current_scenario = st.sidebar.selectbox(
+    "🚨 3. 시나리오 선택",
+    ["시나리오를 선택하세요", "1. 정상 시장", "2. 위기(인플레)", "3. 위기(폭락)", "4. 복합 위기"],
+    key="scenario_select"
+)
+
+# 6. 시뮬레이션 로직
+scenario = st.session_state.current_scenario
+
+if scenario != "시나리오를 선택하세요":
+    # 데이터 파라미터 설정
     r_s, r_b = 0.10, 0.04
     v_s, v_b = 0.18, 0.05
     rho = -0.1
 
-    if "2. 위기(인플레)" in temp_scenario:
+    if "2. 위기(인플레)" in scenario:
         r_s -= 0.05; r_b -= 0.03; rho = 0.3
-    elif "3. 위기(폭락)" in temp_scenario:
+    elif "3. 위기(폭락)" in scenario:
         r_s -= 0.15; v_s *= 1.5; rho = -0.5
-    elif "4. 복합 위기" in temp_scenario:
+    elif "4. 복합 위기" in scenario:
         r_s -= 0.20; r_b -= 0.05; v_s *= 1.8; v_b *= 1.2; rho = 0.5
 
-    # 포트폴리오 지표 계산
     w_s, w_b = stock_ratio/100, bond_ratio/100
     port_return = (w_s * r_s) + (w_b * r_b)
     port_risk = np.sqrt((w_s*v_s)**2 + (w_b*v_b)**2 + (2*w_s*w_b*v_s*v_b*rho))
 
-    # 시뮬레이션 (몬테카를로)
+    # 몬테카를로 시뮬레이션
     n_sims, n_steps, dt = 1000, years * 12, 1/12
     sim_results = np.zeros((n_steps, n_sims))
     for i in range(n_sims):
@@ -96,11 +98,10 @@ if temp_scenario != "시나리오를 선택하세요":
     success_rate = float(np.mean(sim_results[-1, :] >= target_amount) * 100)
     p10 = float(np.percentile(sim_results[-1, :], 10))
 
-    # 결과 기록
-    st.session_state.checked_scenarios.add(temp_scenario)
-    st.session_state.results_log[temp_scenario] = success_rate
+    st.session_state.checked_scenarios.add(scenario)
+    st.session_state.results_log[scenario] = success_rate
 
-    # 결과 화면 대시보드
+    # 화면 출력
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("1. 재무 목표 설정")
@@ -114,23 +115,20 @@ if temp_scenario != "시나리오를 선택하세요":
         st.write(f"**기대 수익률:** {port_return*100:.2f}% / **위험:** {port_risk*100:.2f}%")
 
     st.divider()
-    st.subheader(f"📊 {temp_scenario} 결과")
+    st.subheader(f"📊 {scenario} 결과")
     st.write(f"**목표 달성 확률:** {success_rate:.1f}% / **하위 10% 최종 자산:** {int(p10):,} 만원")
 
-    # 차트 시각화
     fig = go.Figure()
     t_axis = np.arange(1, n_steps + 1) / 12
     fig.add_trace(go.Scatter(x=t_axis, y=np.percentile(sim_results, 50, axis=1), name="중앙값"))
     fig.add_trace(go.Scatter(x=t_axis, y=np.percentile(sim_results, 10, axis=1), name="하위 10%", line=dict(dash='dot')))
-    fig.add_hline(y=target_amount, line_dash="dash", annotation_text="목표금액")
+    fig.add_hline(y=target_amount, line_dash="dash", annotation_text="목표선")
     st.plotly_chart(fig, use_container_width=True)
 
 else:
-    # 아무것도 선택하지 않은 초기 상태
-    st.info("👈 왼쪽 사이드바에서 재무 목표와 자산 비중을 입력한 후, **시나리오를 선택**하여 검증을 시작하세요.")
-    
+    st.info("👈 왼쪽 사이드바에서 조건을 모두 입력한 후, 맨 아래의 **'시나리오'**를 선택하여 검증을 시작하세요.")
 
-# 10. 하단 제어 및 제출 영역
+# 7. 하단 제어 및 제출 영역
 st.divider()
 if not is_finished:
     st.warning(f"💡 현재 {len(st.session_state.checked_scenarios)}/4 시나리오를 확인했습니다. 모든 시나리오를 확인해야 제출 가능합니다. **모두 확인하실 때까지 조건을 변경하실 수 없습니다.**")
@@ -141,6 +139,7 @@ else:
     if bc1.button("🔄 시뮬레이션 조건 다시 입력", use_container_width=True):
         st.session_state.checked_scenarios = set()
         st.session_state.results_log = {}
+        st.session_state.current_scenario = "시나리오를 선택하세요"
         st.rerun()
 
     if bc2.button("📤 결과 제출하기", use_container_width=True):
