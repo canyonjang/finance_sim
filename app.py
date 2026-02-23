@@ -19,11 +19,13 @@ if 'checked_scenarios' not in st.session_state:
 if 'results_log' not in st.session_state:
     st.session_state.results_log = {}
 
-# 4. 입력 잠금 설정 (4개 시나리오 모두 확인 전까지 비활성화)
+# 4. 입력 잠금 로직 수정
+# 아무것도 선택하지 않은 '선택하세요' 상태이거나, 다시 리셋했을 때는 잠금 해제
 is_finished = len(st.session_state.checked_scenarios) >= 4
-disable_input = is_finished == False and len(st.session_state.checked_scenarios) > 0
+# 시나리오를 하나라도 선택(체크)했다면, 4개를 다 보기 전까지는 수정 불가
+disable_input = len(st.session_state.checked_scenarios) > 0 and not is_finished
 
-st.title("🎯 목표 기반 저축 및 투자 동적 시뮬레이션")
+st.title("🎯 목표 기반 저축 및 투자 시뮬레이션")
 st.markdown("---")
 
 # 5. 학생 정보 입력
@@ -35,7 +37,6 @@ with col_info2:
 
 # 6. 사이드바 설정
 st.sidebar.header("📋 1. 재무 목표 및 조건 설정")
-# placeholder 설정: 입력하려고 선택하면 사라지는 가이드 문구
 goal_text = st.sidebar.text_input(
     "목적", 
     placeholder="예) 대학원 학비, 전세 보증금 마련", 
@@ -53,82 +54,85 @@ bond_ratio = 100 - stock_ratio
 st.sidebar.markdown("---")
 st.sidebar.header("🚨 3. 시나리오 선택")
 
-# '조건 다시 입력' 시 정상 시장으로 리셋하기 위한 로직
-if "current_scenario_idx" not in st.session_state:
-    st.session_state.current_scenario_idx = 0
-
-scenario_options = ["1. 정상 시장", "2. 위기(인플레)", "3. 위기(폭락)", "4. 복합 위기"]
+# 시나리오 선택 옵션 (맨 앞에 '선택하세요' 추가)
+scenario_options = ["시나리오를 선택하세요", "1. 정상 시장", "2. 위기(인플레)", "3. 위기(폭락)", "4. 복합 위기"]
 scenario = st.sidebar.selectbox(
     "현재 확인 중인 상황", 
     scenario_options, 
-    index=st.session_state.current_scenario_idx
+    index=0 if len(st.session_state.checked_scenarios) == 0 else None # 리셋 시 0번으로
 )
 
-# 7. 시나리오별 동적 로직
-r_s, r_b = 0.10, 0.04
-v_s, v_b = 0.18, 0.05
-rho = -0.1
+# 7. 시뮬레이션 및 결과 계산 (시나리오를 선택했을 때만 실행)
+if scenario != "시나리오를 선택하세요":
+    # 시나리오별 동적 로직
+    r_s, r_b = 0.10, 0.04
+    v_s, v_b = 0.18, 0.05
+    rho = -0.1
 
-if "2. 위기(인플레)" in scenario:
-    r_s -= 0.05; r_b -= 0.03
-    rho = 0.3
-elif "3. 위기(폭락)" in scenario:
-    r_s -= 0.15; v_s *= 1.5
-    rho = -0.5
-elif "4. 복합 위기" in scenario:
-    r_s -= 0.20; r_b -= 0.05
-    v_s *= 1.8; v_b *= 1.2
-    rho = 0.5
+    if "2. 위기(인플레)" in scenario:
+        r_s -= 0.05; r_b -= 0.03
+        rho = 0.3
+    elif "3. 위기(폭락)" in scenario:
+        r_s -= 0.15; v_s *= 1.5
+        rho = -0.5
+    elif "4. 복합 위기" in scenario:
+        r_s -= 0.20; r_b -= 0.05
+        v_s *= 1.8; v_b *= 1.2
+        rho = 0.5
 
-# 8. MPT 및 시뮬레이션 계산
-w_s, w_b = stock_ratio/100, bond_ratio/100
-port_return = (w_s * r_s) + (w_b * r_b)
-port_risk = np.sqrt((w_s*v_s)**2 + (w_b*v_b)**2 + (2*w_s*w_b*v_s*v_b*rho))
+    # MPT 및 시뮬레이션 계산
+    w_s, w_b = stock_ratio/100, bond_ratio/100
+    port_return = (w_s * r_s) + (w_b * r_b)
+    port_risk = np.sqrt((w_s*v_s)**2 + (w_b*v_b)**2 + (2*w_s*w_b*v_s*v_b*rho))
 
-n_sims, n_steps, dt = 1000, years * 12, 1/12
-sim_results = np.zeros((n_steps, n_sims))
-for i in range(n_sims):
-    balance = 0
-    for t in range(n_steps):
-        shock = np.random.normal(port_return * dt, port_risk * np.sqrt(dt))
-        balance = (balance + monthly_deposit) * (1 + shock)
-        sim_results[t, i] = balance
+    n_sims, n_steps, dt = 1000, years * 12, 1/12
+    sim_results = np.zeros((n_steps, n_sims))
+    for i in range(n_sims):
+        balance = 0
+        for t in range(n_steps):
+            shock = np.random.normal(port_return * dt, port_risk * np.sqrt(dt))
+            balance = (balance + monthly_deposit) * (1 + shock)
+            sim_results[t, i] = balance
 
-success_rate = float(np.mean(sim_results[-1, :] >= target_amount) * 100)
-p10 = float(np.percentile(sim_results[-1, :], 10))
+    success_rate = float(np.mean(sim_results[-1, :] >= target_amount) * 100)
+    p10 = float(np.percentile(sim_results[-1, :], 10))
 
-# 상태 기록
-st.session_state.checked_scenarios.add(scenario)
-st.session_state.results_log[scenario] = success_rate
+    # 상태 기록
+    st.session_state.checked_scenarios.add(scenario)
+    st.session_state.results_log[scenario] = success_rate
 
-# 9. 결과 화면 출력
-c1, c2 = st.columns(2)
-with c1:
-    st.subheader("1. 재무 목표 설정")
-    st.write(f"**목적:** {goal_text if goal_text else '(미입력)'}")
-    st.write(f"**목표 금액:** {target_amount:,} 만원")
-    st.write(f"**달성 기간:** {years} 년")
-    st.write(f"**필요 월 저축액:** {monthly_deposit:,} 만원")
-with c2:
-    st.subheader("2. 자산 배분 전략")
-    st.write(f"**주식 비중:** {stock_ratio}% / **채권 비중:** {bond_ratio}%")
-    st.write(f"**기대 수익률:** {port_return*100:.2f}% / **위험:** {port_risk*100:.2f}%")
+    # 결과 화면 출력
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("1. 재무 목표 설정")
+        st.write(f"**목적:** {goal_text if goal_text else '(미입력)'}")
+        st.write(f"**목표 금액:** {target_amount:,} 만원")
+        st.write(f"**달성 기간:** {years} 년")
+        st.write(f"**필요 월 저축액:** {monthly_deposit:,} 만원")
+    with c2:
+        st.subheader("2. 자산 배분 전략")
+        st.write(f"**주식 비중:** {stock_ratio}% / **채권 비중:** {bond_ratio}%")
+        st.write(f"**기대 수익률:** {port_return*100:.2f}% / **위험:** {port_risk*100:.2f}%")
 
-st.divider()
-st.subheader(f"📊 {scenario} 결과")
-st.write(f"**목표 달성 확률:** {success_rate:.1f}% / **하위 10% 최종 자산:** {int(p10):,} 만원")
+    st.divider()
+    st.subheader(f"📊 {scenario} 결과")
+    st.write(f"**목표 달성 확률:** {success_rate:.1f}% / **하위 10% 최종 자산:** {int(p10):,} 만원")
 
-fig = go.Figure()
-t_axis = np.arange(1, n_steps + 1) / 12
-fig.add_trace(go.Scatter(x=t_axis, y=np.percentile(sim_results, 50, axis=1), name="중앙값"))
-fig.add_trace(go.Scatter(x=t_axis, y=np.percentile(sim_results, 10, axis=1), name="하위 10%", line=dict(dash='dot')))
-fig.add_hline(y=target_amount, line_dash="dash", annotation_text="목표금액")
-st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure()
+    t_axis = np.arange(1, n_steps + 1) / 12
+    fig.add_trace(go.Scatter(x=t_axis, y=np.percentile(sim_results, 50, axis=1), name="중앙값"))
+    fig.add_trace(go.Scatter(x=t_axis, y=np.percentile(sim_results, 10, axis=1), name="하위 10%", line=dict(dash='dot')))
+    fig.add_hline(y=target_amount, line_dash="dash", annotation_text="목표금액")
+    st.plotly_chart(fig, use_container_width=True)
+
+else:
+    # 아무것도 선택하지 않았을 때의 안내 화면
+    st.info("👈 왼쪽 사이드바에서 모든 조건을 입력한 후, '시나리오'를 선택하여 시뮬레이션을 시작하세요.")
+    
 
 # 10. 하단 제어 영역
 st.divider()
 if not is_finished:
-    # 교수님 요청 문구 추가
     st.warning(f"💡 현재 {len(st.session_state.checked_scenarios)}/4 시나리오를 확인했습니다. 모두 확인해야 제출 가능합니다. **모두 확인하실 때까지 조건을 변경하실 수 없습니다.**")
 else:
     st.success("✅ 모든 시나리오 검증 완료! 이제 결과를 제출하거나 조건을 수정할 수 있습니다.")
@@ -137,7 +141,6 @@ else:
     if bc1.button("🔄 시뮬레이션 조건 다시 입력", use_container_width=True):
         st.session_state.checked_scenarios = set()
         st.session_state.results_log = {}
-        st.session_state.current_scenario_idx = 0
         st.rerun()
 
     if bc2.button("📤 결과 제출하기", use_container_width=True):
