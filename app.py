@@ -7,13 +7,13 @@ from streamlit_gsheets import GSheetsConnection
 # 1. 페이지 설정
 st.set_page_config(page_title="재무 설계 스트레스 테스트", layout="wide")
 
-# 2. 구글 시트 연결 초기화
+# 2. 구글 시트 연결
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
     st.error("구글 시트 연결 설정(Secrets)이 필요합니다.")
 
-# 3. 상태 관리
+# 3. 상태 관리 변수 초기화
 if 'checked_scenarios' not in st.session_state:
     st.session_state.checked_scenarios = set()
 if 'results_log' not in st.session_state:
@@ -29,19 +29,24 @@ with col_info1:
 with col_info2:
     user_id = st.text_input("🆔 학번", placeholder="학번을 입력하세요")
 
-# 5. 사이드바 설정 (시나리오 선택을 맨 아래로 이동)
+# 5. 사이드바 로직 - 잠금 상태 먼저 결정
+# 현재 선택된 시나리오 확인
+# 'selectbox'의 key를 활용하여 상태를 즉시 파악합니다.
+scenario_choice = st.sidebar.selectbox(
+    "🚨 3. 시나리오 선택",
+    ["시나리오를 선택하세요", "1. 정상 시장", "2. 위기(인플레)", "3. 위기(폭락)", "4. 복합 위기"],
+    key="current_scenario_choice"
+)
+
+# 잠금 조건: '선택하세요'가 아니면 무조건 잠금 (0/4 -> 1/4 넘어가는 즉시)
+is_active = scenario_choice != "시나리오를 선택하세요"
+is_finished = len(st.session_state.checked_scenarios) >= 4
+disable_input = is_active or is_finished
+
+st.sidebar.markdown("---")
 st.sidebar.header("📋 1. 재무 목표 및 조건 설정")
 
-# 잠금 로직: 시나리오가 '선택하세요'가 아니면 즉시 잠금
-# selectbox의 위치는 아래에 있지만, 변수를 미리 선언하기 위해 placeholder 개념 활용
-if "current_scenario" not in st.session_state:
-    st.session_state.current_scenario = "시나리오를 선택하세요"
-
-is_finished = len(st.session_state.checked_scenarios) >= 4
-disable_input = (st.session_state.current_scenario != "시나리오를 선택하세요") or is_finished
-
-# --- 사이드바 입력창 영역 ---
-st.sidebar.subheader("💰 조건 입력")
+# 💰 조건 입력 영역
 goal_text = st.sidebar.text_input(
     "목적", 
     placeholder="예) 대학원 학비, 전세 보증금 마련", 
@@ -52,24 +57,17 @@ years = st.sidebar.slider("달성 기간 (년)", 1, 15, 5, disabled=disable_inpu
 monthly_deposit = st.sidebar.number_input("필요 월 저축액 (만원)", 10, 1000, 100, 10, disabled=disable_input)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📈 2. 자산 배분 전략")
+st.sidebar.header("📈 2. 자산 배분 전략")
 stock_ratio = st.sidebar.slider("주식 비중 (%)", 0, 100, 60, disabled=disable_input)
 bond_ratio = 100 - stock_ratio
 st.sidebar.info(f"채권 비중: {bond_ratio}%")
 
-st.sidebar.markdown("---")
-# --- 시나리오 선택창을 맨 아래로 배치 ---
-st.session_state.current_scenario = st.sidebar.selectbox(
-    "🚨 3. 시나리오 선택",
-    ["시나리오를 선택하세요", "1. 정상 시장", "2. 위기(인플레)", "3. 위기(폭락)", "4. 복합 위기"],
-    key="scenario_select"
-)
-
-# 6. 시뮬레이션 로직
-scenario = st.session_state.current_scenario
-
-if scenario != "시나리오를 선택하세요":
-    # 데이터 파라미터 설정
+# 6. 시뮬레이션 로직 실행
+if is_active:
+    # 시나리오 이름 추출
+    scenario = scenario_choice
+    
+    # 파라미터 설정
     r_s, r_b = 0.10, 0.04
     v_s, v_b = 0.18, 0.05
     rho = -0.1
@@ -81,11 +79,12 @@ if scenario != "시나리오를 선택하세요":
     elif "4. 복합 위기" in scenario:
         r_s -= 0.20; r_b -= 0.05; v_s *= 1.8; v_b *= 1.2; rho = 0.5
 
+    # 계산
     w_s, w_b = stock_ratio/100, bond_ratio/100
     port_return = (w_s * r_s) + (w_b * r_b)
     port_risk = np.sqrt((w_s*v_s)**2 + (w_b*v_b)**2 + (2*w_s*w_b*v_s*v_b*rho))
 
-    # 몬테카를로 시뮬레이션
+    # 몬테카를로
     n_sims, n_steps, dt = 1000, years * 12, 1/12
     sim_results = np.zeros((n_steps, n_sims))
     for i in range(n_sims):
@@ -98,10 +97,11 @@ if scenario != "시나리오를 선택하세요":
     success_rate = float(np.mean(sim_results[-1, :] >= target_amount) * 100)
     p10 = float(np.percentile(sim_results[-1, :], 10))
 
+    # 기록 (세션 업데이트)
     st.session_state.checked_scenarios.add(scenario)
     st.session_state.results_log[scenario] = success_rate
 
-    # 화면 출력
+    # 결과 대시보드 출력
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("1. 재무 목표 설정")
@@ -118,6 +118,7 @@ if scenario != "시나리오를 선택하세요":
     st.subheader(f"📊 {scenario} 결과")
     st.write(f"**목표 달성 확률:** {success_rate:.1f}% / **하위 10% 최종 자산:** {int(p10):,} 만원")
 
+    # 차트
     fig = go.Figure()
     t_axis = np.arange(1, n_steps + 1) / 12
     fig.add_trace(go.Scatter(x=t_axis, y=np.percentile(sim_results, 50, axis=1), name="중앙값"))
@@ -126,20 +127,26 @@ if scenario != "시나리오를 선택하세요":
     st.plotly_chart(fig, use_container_width=True)
 
 else:
-    st.info("👈 왼쪽 사이드바에서 조건을 모두 입력한 후, 맨 아래의 **'시나리오'**를 선택하여 검증을 시작하세요.")
+    # 초기 상태 안내
+    st.info("👈 왼쪽 사이드바에서 조건을 입력한 후, 맨 아래 **'시나리오'**를 선택하세요.")
 
-# 7. 하단 제어 및 제출 영역
+# 7. 하단 제어 섹션
 st.divider()
+
+# 현재 진행 상황 재확인
+is_finished = len(st.session_state.checked_scenarios) >= 4
+
 if not is_finished:
-    st.warning(f"💡 현재 {len(st.session_state.checked_scenarios)}/4 시나리오를 확인했습니다. 모든 시나리오를 확인해야 제출 가능합니다. **모두 확인하실 때까지 조건을 변경하실 수 없습니다.**")
+    st.warning(f"💡 현재 {len(st.session_state.checked_scenarios)}/4 시나리오를 확인했습니다. 모두 확인해야 제출 가능합니다. **시나리오를 하나라도 선택하시면 조건을 변경하실 수 없습니다.**")
 else:
-    st.success("✅ 모든 시나리오 검증 완료! 이제 결과를 제출하거나 조건을 수정할 수 있습니다.")
+    st.success("✅ 4가지 시나리오 검증 완료! 이제 결과를 제출하거나 조건을 수정할 수 있습니다.")
     bc1, bc2 = st.columns(2)
     
     if bc1.button("🔄 시뮬레이션 조건 다시 입력", use_container_width=True):
+        # 모든 상태 초기화 후 페이지 리프레시
         st.session_state.checked_scenarios = set()
         st.session_state.results_log = {}
-        st.session_state.current_scenario = "시나리오를 선택하세요"
+        # selectbox 강제 초기화는 rerun 시 index=0으로 처리됨
         st.rerun()
 
     if bc2.button("📤 결과 제출하기", use_container_width=True):
