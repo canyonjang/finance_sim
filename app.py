@@ -18,7 +18,6 @@ if 'checked_scenarios' not in st.session_state:
     st.session_state.checked_scenarios = set()
 if 'results_log' not in st.session_state:
     st.session_state.results_log = {}
-# 시나리오 선택 위젯을 제어하기 위한 별도의 리셋용 변수
 if 'reset_counter' not in st.session_state:
     st.session_state.reset_counter = 0
 
@@ -33,8 +32,6 @@ with col_info2:
     user_id = st.text_input("🆔 학번", placeholder="학번을 입력하세요")
 
 # 5. 잠금 로직: 시나리오가 선택되었는지 미리 확인
-# (selectbox가 아래에 있지만 값을 미리 알아내기 위해 key를 활용)
-# 위젯이 아직 생성 전일 때 에러 방지용
 current_choice = st.session_state.get(f"scenario_widget_{st.session_state.reset_counter}", "시나리오를 선택하세요")
 
 is_active = (current_choice != "시나리오를 선택하세요")
@@ -57,7 +54,6 @@ st.sidebar.info(f"채권 비중: {bond_ratio}%")
 st.sidebar.markdown("---")
 # 🚨 3. 시나리오 선택 (맨 아래 배치)
 st.sidebar.header("🚨 3. 시나리오 선택")
-# 리셋 시 위젯을 새로 만들기 위해 key에 reset_counter를 포함시킴
 scenario = st.sidebar.selectbox(
     "현재 상황을 선택하여 검증하세요",
     ["시나리오를 선택하세요", "1. 정상 시장", "2. 위기(인플레)", "3. 위기(폭락)", "4. 복합 위기"],
@@ -103,8 +99,10 @@ if scenario != "시나리오를 선택하세요":
         st.write(f"**목적:** {goal_text if goal_text else '(미입력)'}")
         st.write(f"**목표 금액:** {target_amount:,} 만원")
         st.write(f"**달성 기간:** {years} 년")
+        st.write(f"**필요 월 저축액:** {monthly_deposit:,} 만원")
     with c2:
         st.subheader("⚖️ 2. 자산 배분 결과")
+        st.write(f"**주식 비중:** {stock_ratio}% / **채권 비중:** {bond_ratio}%")
         st.write(f"**기대 수익률:** {port_return*100:.2f}%")
         st.write(f"**포트폴리오 위험:** {port_risk*100:.2f}%")
 
@@ -128,7 +126,7 @@ st.divider()
 current_count = len(st.session_state.checked_scenarios)
 
 if current_count < 4:
-    st.warning(f"💡 현재 {current_count}/4 시나리오를 확인했습니다. 모두 확인해야 제출 가능합니다. **시나리오 선택 시 조건 변경 불가.**")
+    st.warning(f"💡 현재 {current_count}/4 시나리오를 확인했습니다. 모두 확인해야 제출 가능합니다. **시나리오를 하나라도 선택하시면 조건을 변경하실 수 없습니다.**")
 else:
     st.success("✅ 4가지 시나리오 검증 완료! 이제 결과를 제출하거나 조건을 수정할 수 있습니다.")
     bc1, bc2 = st.columns(2)
@@ -136,7 +134,6 @@ else:
     if bc1.button("🔄 시뮬레이션 조건 다시 입력", use_container_width=True):
         st.session_state.checked_scenarios = set()
         st.session_state.results_log = {}
-        # 위젯을 강제로 초기화하기 위해 카운터 증가
         st.session_state.reset_counter += 1
         st.rerun()
 
@@ -145,6 +142,7 @@ else:
             st.error("이름, 학번, 목적을 모두 입력해주세요.")
         else:
             try:
+                # 1. 제출용 새 데이터 생성
                 new_data = pd.DataFrame([{
                     "이름": str(user_name), "학번": str(user_id), "목적": str(goal_text),
                     "목표금액": int(target_amount), "기간": int(years), "월저축액": int(monthly_deposit),
@@ -154,11 +152,23 @@ else:
                     "폭락_확률": round(st.session_state.results_log.get("3. 위기(폭락)", 0), 2),
                     "복합_확률": round(st.session_state.results_log.get("4. 복합 위기", 0), 2)
                 }])
+                
+                # 2. 기존 데이터 읽기 및 전처리 (빈 행 제거)
                 existing_df = conn.read(worksheet="Sheet1")
-                updated_df = pd.concat([existing_df, new_data], ignore_index=True)
+                if existing_df is not None:
+                    existing_df = existing_df.dropna(how='all')
+                
+                # 3. 데이터 병합
+                if existing_df is not None and not existing_df.empty:
+                    updated_df = pd.concat([existing_df, new_data], ignore_index=True)
+                else:
+                    updated_df = new_data
+                
+                # 4. 시트 업데이트
                 conn.update(worksheet="Sheet1", data=updated_df)
+                
                 st.balloons()
-                st.success("제출 성공!")
+                st.success("제출 성공! 교수님 시트에 기록되었습니다.")
             except Exception as e:
                 st.error(f"제출 오류: {e}")
 
