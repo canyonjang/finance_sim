@@ -12,7 +12,8 @@ st.set_page_config(page_title="재무 설계 스트레스 테스트", layout="wi
 def append_to_gsheet(data_list):
     try:
         # Streamlit secrets에서 보안 정보 가져오기
-        scope = ["https://www.googleapis.com/auth/spreadsheets"]
+        scope = ["https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"]
         creds_info = st.secrets["connections"]["gsheets"]
         credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
         client = gspread.authorize(credentials)
@@ -115,3 +116,4 @@ else:
     st.warning("💡 4가지 시나리오를 모두 확인해야 제출 버튼이 나타납니다.")
 
 st.markdown("<p style='text-align: center; font-size: 0.8em; color: gray;'>새로운 조건으로 시뮬레이션을 충분히 해본 뒤 결과 제출은 한 번만 하시기 바랍니다.</p>", unsafe_allow_html=True)
+
